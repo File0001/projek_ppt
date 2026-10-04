@@ -1,0 +1,24 @@
+src/__pycache__/
+tests/__pycache__/
+__pycache__/
+build/
+dist/
+output/
+.venv/
+*.spec
+!ExcelToPdfConverter.spec
+src/ui/queue_data.json
+.clineignore
+.clinerules
+.cline/
+Transaksi diterima!.eml
+Transaksi diterima!.json
+src/.env.example
+.env
+*.env
+src/.env
+
+# Installer build outputs (keep sources: installer/*.iss, build-installer.bat, icon.ico)
+installer/*.exe
+installer/*.bin
+

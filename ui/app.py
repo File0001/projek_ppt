@@ -1,0 +1,788 @@
+"""Aplikasi utama: class PDFMultiSlidePro (view + controller).
+
+Logika PDF didelegasikan ke core/ (headless). UI state tetap di tkinter Var.
+"""
+
+import os
+import threading
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+import pymupdf
+
+from core.constants import (
+    MAX_GRID,
+    MAX_SLIDES_PER_PAGE,
+    ORIENTATION_LANDSCAPE,
+    PAPER_SIZE,
+    MIN_GRID,
+)
+from core.nup import LayoutError, compute_cell_rect, compute_grid, compute_page_geometry
+from core.pipeline import process_all
+from ui import widgets
+from ui.styles import create_styles
+from utils.fs import file_size, format_size, normalize_key, open_folder
+
+# Drag & drop opsional.
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+
+    DND_AVAILABLE = True
+except ImportError:
+    DND_AVAILABLE = False
+
+
+class PDFMultiSlidePro:
+    """GUI utama: input file → atur grid → hasilkan PDF N-up."""
+
+    # ==========================================================
+    # INIT
+    # ==========================================================
+
+    def __init__(self, root):
+        self.root = root
+
+        self.root.title("PDF ke Slide • Multi Slide Pro")
+        self.root.geometry("1400x850")
+        self.root.minsize(1180, 720)
+        self.root.configure(bg="#F4F6FA")
+
+        self.files = []
+
+        create_styles()
+        self.create_ui()
+
+        if DND_AVAILABLE:
+            self.enable_drag_drop(self.root)
+
+        self.update_preview()
+
+    # ==========================================================
+    # UI
+    # ==========================================================
+
+    def create_ui(self):
+        root_frame = ttk.Frame(self.root, padding=(22, 18, 22, 14))
+        root_frame.pack(fill="both", expand=True)
+
+        self._build_header(root_frame)
+
+        content = ttk.Frame(root_frame)
+        content.pack(fill="both", expand=True)
+
+        self._build_left_panel(content)
+        self._build_center_panel(content)
+        self._build_right_panel(content)
+        self._build_bottom(root_frame)
+
+    # ----------------------------------------------------------
+    # HEADER
+    # ----------------------------------------------------------
+
+    def _build_header(self, parent):
+        header = ttk.Frame(parent)
+        header.pack(fill="x", pady=(0, 14))
+
+        title_line = ttk.Frame(header)
+        title_line.pack(fill="x")
+
+        ttk.Label(
+            title_line,
+            text="Ubah PDF jadi presentasi",
+            style="Title.TLabel",
+        ).pack(side="left")
+
+        widgets.inline_badge(
+            title_line, "  Siap dipresentasikan  "
+        ).pack(side="left", padx=(12, 0), pady=(5, 0))
+
+        ttk.Label(
+            header,
+            text=(
+                "Susun PDF menjadi beberapa slide "
+                "dalam satu halaman dengan layout yang rapi."
+            ),
+            style="Subtitle.TLabel",
+        ).pack(anchor="w", pady=(3, 0))
+
+    # ----------------------------------------------------------
+    # LEFT PANEL — daftar file
+    # ----------------------------------------------------------
+
+    def _build_left_panel(self, content):
+        left = ttk.Frame(content, style="Card.TFrame", padding=14, width=270)
+        left.pack(side="left", fill="y", padx=(0, 8))
+        left.pack_propagate(False)
+
+        header = ttk.Frame(left, style="Card.TFrame")
+        header.pack(fill="x")
+
+        ttk.Label(header, text="Daftar PDF", style="Section.TLabel").pack(
+            side="left"
+        )
+
+        self.file_count_var = tk.StringVar(value="0 file • 0 halaman")
+        ttk.Label(
+            header, textvariable=self.file_count_var, style="Muted.TLabel"
+        ).pack(side="right")
+
+        tree_box = ttk.Frame(left, style="Card.TFrame")
+        tree_box.pack(fill="both", expand=True, pady=(10, 0))
+
+        self.tree = ttk.Treeview(
+            tree_box,
+            columns=("name", "pages"),
+            show="headings",
+            selectmode="extended",
+        )
+        self.tree.heading("name", text="Nama file")
+        self.tree.heading("pages", text="Hal.")
+        self.tree.column("name", width=175, anchor="w")
+        self.tree.column("pages", width=45, anchor="center", stretch=False)
+
+        tree_scroll = ttk.Scrollbar(
+            tree_box, orient="vertical", command=self.tree.yview
+        )
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        tree_scroll.pack(side="right", fill="y")
+
+        file_buttons = ttk.Frame(left, style="Card.TFrame")
+        file_buttons.pack(fill="x", pady=(8, 0))
+
+        ttk.Button(
+            file_buttons,
+            text="＋  Tambah PDF",
+            style="Main.TButton",
+            command=self.add_files,
+        ).pack(fill="x")
+
+        second_row = ttk.Frame(file_buttons, style="Card.TFrame")
+        second_row.pack(fill="x", pady=(5, 0))
+        second_row.columnconfigure(0, weight=1)
+        second_row.columnconfigure(1, weight=1)
+
+        ttk.Button(
+            second_row,
+            text="Hapus",
+            style="Main.TButton",
+            command=self.remove_selected,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+        ttk.Button(
+            second_row,
+            text="Bersihkan",
+            style="Main.TButton",
+            command=self.clear_files,
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
+        ttk.Label(
+            left,
+            text="Seret PDF ke area mana pun untuk menambahkannya.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(7, 0))
+
+    # ----------------------------------------------------------
+    # CENTER — preview
+    # ----------------------------------------------------------
+
+    def _build_center_panel(self, content):
+        center = ttk.Frame(content, style="Card.TFrame")
+        center.pack(side="left", fill="both", expand=True, padx=(0, 8))
+
+        preview_header = ttk.Frame(
+            center, style="Card.TFrame", padding=(14, 12, 14, 8)
+        )
+        preview_header.pack(fill="x")
+
+        ttk.Label(
+            preview_header,
+            text="Preview presentasi",
+            style="Section.TLabel",
+        ).pack(side="left")
+
+        self.preview_badge = widgets.badge(preview_header, "6 slide / lembar")
+        self.preview_badge.pack(side="left", padx=(10, 0))
+
+        ttk.Label(
+            preview_header, text="A4 • Otomatis", style="Muted.TLabel"
+        ).pack(side="right")
+
+        preview_container = tk.Frame(center, bg="#E8ECF3")
+        preview_container.pack(fill="both", expand=True)
+
+        self.preview_canvas = tk.Canvas(
+            preview_container, bg="#E8ECF3", highlightthickness=0
+        )
+        self.preview_canvas.pack(fill="both", expand=True, padx=18, pady=18)
+        self.preview_canvas.bind(
+            "<Configure>", lambda event: self.update_preview()
+        )
+
+        preview_footer = ttk.Frame(
+            center, style="Card.TFrame", padding=(14, 8, 14, 10)
+        )
+        preview_footer.pack(fill="x")
+
+        self.preview_status = tk.Label(
+            preview_footer,
+            text="● Preview siap",
+            bg="#FFFFFF",
+            fg="#2D9A70",
+            font=("Segoe UI", 8, "bold"),
+        )
+        self.preview_status.pack(side="left")
+
+        self.preview_info = ttk.Label(
+            preview_footer, text="A4 • Auto Center", style="Muted.TLabel"
+        )
+        self.preview_info.pack(side="right")
+
+    # ----------------------------------------------------------
+    # RIGHT PANEL — pengaturan
+    # ----------------------------------------------------------
+
+    def _build_right_panel(self, content):
+        right = ttk.Frame(content, style="Card.TFrame", padding=14, width=350)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+
+        settings_header = ttk.Frame(right, style="Card.TFrame")
+        settings_header.pack(fill="x")
+
+        ttk.Label(
+            settings_header, text="Pengaturan slide", style="Section.TLabel"
+        ).pack(side="left")
+        ttk.Label(
+            settings_header, text="Preset: Otomatis", style="Muted.TLabel"
+        ).pack(side="right")
+
+        self._build_grid_controls(right)
+        self._build_orientation_control(right)
+
+        ttk.Separator(right).pack(fill="x", pady=13)
+        self._build_output_options(right)
+
+        ttk.Separator(right).pack(fill="x", pady=13)
+        self._build_valid_status(right)
+        self._build_process_button(right)
+
+    def _build_grid_controls(self, right):
+        ttk.Label(right, text="Tata letak slide", style="Muted.TLabel").pack(
+            anchor="w", pady=(18, 7)
+        )
+
+        grid_frame = ttk.Frame(right, style="Card.TFrame")
+        grid_frame.pack(fill="x")
+        grid_frame.columnconfigure(0, weight=1)
+        grid_frame.columnconfigure(1, weight=0)
+        grid_frame.columnconfigure(2, weight=1)
+
+        ttk.Label(grid_frame, text="Kolom", style="Muted.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(grid_frame, text="Baris", style="Muted.TLabel").grid(
+            row=0, column=2, sticky="w"
+        )
+
+        self.cols_var = tk.StringVar(value="3")
+        self.rows_var = tk.StringVar(value="2")
+
+        cols_entry = ttk.Entry(grid_frame, textvariable=self.cols_var)
+        cols_entry.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+
+        tk.Label(
+            grid_frame,
+            text="×",
+            bg="#FFFFFF",
+            fg="#7A8496",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=1, column=1, padx=7)
+
+        rows_entry = ttk.Entry(grid_frame, textvariable=self.rows_var)
+        rows_entry.grid(row=1, column=2, sticky="ew", pady=(3, 0))
+
+        cols_entry.bind("<KeyRelease>", lambda e: self.update_preview())
+        rows_entry.bind("<KeyRelease>", lambda e: self.update_preview())
+
+    def _build_orientation_control(self, right):
+        ttk.Label(right, text="Orientasi", style="Muted.TLabel").pack(
+            anchor="w", pady=(16, 4)
+        )
+
+        self.orientation_var = tk.StringVar(value=ORIENTATION_LANDSCAPE)
+
+        orientation_cb = ttk.Combobox(
+            right,
+            textvariable=self.orientation_var,
+            values=["Portrait", "Landscape"],
+            state="readonly",
+        )
+        orientation_cb.pack(fill="x")
+        orientation_cb.bind(
+            "<<ComboboxSelected>>", lambda e: self.update_preview()
+        )
+
+    def _build_output_options(self, right):
+        ttk.Label(right, text="OPSI OUTPUT", style="Muted.TLabel").pack(
+            anchor="w"
+        )
+
+        self.border_var = tk.BooleanVar(value=True)
+        self.number_var = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(
+            right,
+            text="Tampilkan kotak pada preview",
+            variable=self.border_var,
+            command=self.update_preview,
+        ).pack(anchor="w", pady=(7, 2))
+        ttk.Label(
+            right,
+            text="Kotak hanya untuk membantu melihat posisi slide.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", padx=(24, 0))
+
+        ttk.Checkbutton(
+            right,
+            text="Tampilkan nomor slide pada PDF",
+            variable=self.number_var,
+        ).pack(anchor="w", pady=(9, 2))
+        ttk.Label(
+            right,
+            text="Nomor ditambahkan pada bagian atas slide.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", padx=(24, 0))
+
+    def _build_process_button(self, right):
+        # Nama file hasil default (dipakai saat dialog simpan); tidak lagi
+        # ditampilkan sebagai input — user memilih nama langsung di dialog simpan.
+        self.output_name_var = tk.StringVar(value="Hasil_Gabungan.pdf")
+
+        self.process_button = ttk.Button(
+            right,
+            text="📄  JADIKAN PDF",
+            style="Process.TButton",
+            command=self.start_process,
+        )
+        self.process_button.pack(fill="x", ipady=6, pady=(4, 0))
+
+
+    def _build_valid_status(self, right):
+        status_valid = tk.Frame(right, bg="#E9F8F1", padx=9, pady=8)
+        status_valid.pack(fill="x", pady=(14, 10))
+
+        tk.Label(
+            status_valid,
+            text="✓",
+            bg="#E9F8F1",
+            fg="#29966D",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+
+        tk.Label(
+            status_valid,
+            text="Semua halaman siap diproses.",
+            bg="#E9F8F1",
+            fg="#2E8A68",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(side="left", padx=(6, 0))
+
+    # ----------------------------------------------------------
+    # BOTTOM — status + progress + tombol proses
+    # ----------------------------------------------------------
+
+    def _build_bottom(self, root_frame):
+        bottom = ttk.Frame(root_frame)
+        bottom.pack(fill="x", pady=(10, 0))
+
+        status_box = ttk.Frame(bottom)
+        status_box.pack(side="left", fill="x", expand=True, padx=(0, 15))
+
+        self.status_var = tk.StringVar(
+            value="Siap. Tambahkan file PDF untuk memulai."
+        )
+        ttk.Label(
+            status_box,
+            textvariable=self.status_var,
+            background="#F4F6FA",
+            foreground="#4B5563",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="w")
+
+        self.progress = ttk.Progressbar(
+            status_box,
+            mode="determinate",
+            maximum=100,
+            style="Horizontal.TProgressbar",
+        )
+        self.progress.pack(fill="x", pady=(5, 0))
+
+
+    # ==========================================================
+    # DRAG & DROP
+    # ==========================================================
+
+    def enable_drag_drop(self, widget):
+        try:
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind("<<Drop>>", self.handle_drop)
+        except Exception:
+            pass
+
+        try:
+            children = widget.winfo_children()
+        except Exception:
+            children = []
+
+        for child in children:
+            self.enable_drag_drop(child)
+
+    def handle_drop(self, event):
+        try:
+            paths = self.root.tk.splitlist(event.data)
+        except Exception:
+            paths = [event.data]
+
+        pdf_paths = []
+        for path in paths:
+            path = path.strip()
+            if path.startswith("{") and path.endswith("}"):
+                path = path[1:-1]
+
+            if os.path.isfile(path) and path.lower().endswith(".pdf"):
+                pdf_paths.append(path)
+
+        if pdf_paths:
+            self.add_dropped_files(pdf_paths)
+
+        return "break"
+
+    # ==========================================================
+    # FILE MANAGEMENT
+    # ==========================================================
+
+    def add_dropped_files(self, paths):
+        existing = {normalize_key(p) for p in self.files}
+        added = 0
+
+        for path in paths:
+            key = normalize_key(path)
+            if key in existing:
+                continue
+
+            try:
+                doc = pymupdf.open(path)
+                doc.close()
+
+                self.files.append(path)
+                existing.add(key)
+                added += 1
+            except Exception:
+                pass
+
+        self.refresh_tree()
+
+        if added:
+            self.status_var.set(f"{added} PDF berhasil ditambahkan.")
+
+    def add_files(self):
+        paths = filedialog.askopenfilenames(
+            title="Pilih File PDF",
+            filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+        )
+        if paths:
+            self.add_dropped_files(paths)
+
+    def refresh_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        total_pages = 0
+        for path in self.files:
+            try:
+                doc = pymupdf.open(path)
+                pages = len(doc)
+                doc.close()
+            except Exception:
+                pages = "?"
+
+            self.tree.insert(
+                "", "end", values=(os.path.basename(path), pages)
+            )
+
+            if isinstance(pages, int):
+                total_pages += pages
+
+        self.file_count_var.set(
+            f"{len(self.files)} file • {total_pages} halaman"
+        )
+
+    def remove_selected(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Belum Dipilih", "Pilih file yang ingin dihapus."
+            )
+            return
+
+        indexes = [self.tree.index(item) for item in selected]
+        for i in sorted(indexes, reverse=True):
+            del self.files[i]
+
+        self.refresh_tree()
+
+    def clear_files(self):
+        if not self.files:
+            return
+
+        if messagebox.askyesno("Konfirmasi", "Hapus semua PDF dari daftar?"):
+            self.files.clear()
+            self.refresh_tree()
+            self.status_var.set("Daftar PDF telah dibersihkan.")
+
+    # ==========================================================
+    # PREVIEW
+    # ==========================================================
+
+    def update_preview(self):
+        if not hasattr(self, "preview_canvas"):
+            return
+
+        canvas = self.preview_canvas
+        canvas.delete("all")
+
+        cols, rows = self._parse_grid()
+        slides_per_page = min(cols * rows, MAX_SLIDES_PER_PAGE)
+
+        # A4 dalam mm (untuk skala preview).
+        pw, ph = 210, 297
+        if self.orientation_var.get() == ORIENTATION_LANDSCAPE:
+            pw, ph = ph, pw
+
+        canvas.update_idletasks()
+        cw = max(300, canvas.winfo_width())
+        ch = max(300, canvas.winfo_height())
+
+        scale = min((cw - 45) / pw, (ch - 45) / ph)
+        w = pw * scale
+        h = ph * scale
+
+        x0 = (cw - w) / 2
+        y0 = (ch - h) / 2
+        x1 = x0 + w
+        y1 = y0 + h
+
+        # Shadow + kertas A4.
+        canvas.create_rectangle(
+            x0 + 5, y0 + 5, x1 + 5, y1 + 5, fill="#CBD1DC", outline=""
+        )
+        canvas.create_rectangle(
+            x0, y0, x1, y1, fill="#FFFFFF", outline="#B7BFCC"
+        )
+
+        margin = 3 / pw * w
+        gap = 3 / pw * w
+        usable_w = w - 2 * margin - gap * (cols - 1)
+        usable_h = h - 2 * margin - gap * (rows - 1)
+        cell_w = usable_w / cols
+        cell_h = usable_h / rows
+
+        for i in range(slides_per_page):
+            row = i // cols
+            col = i % cols
+
+            sx0 = x0 + margin + col * (cell_w + gap)
+            sy0 = y0 + margin + row * (cell_h + gap)
+            sx1 = sx0 + cell_w
+            sy1 = sy0 + cell_h
+
+            if self.border_var.get():
+                canvas.create_rectangle(
+                    sx0, sy0, sx1, sy1,
+                    fill="#FBFCFE", outline="#AAB3C2", width=1,
+                )
+            else:
+                canvas.create_rectangle(
+                    sx0, sy0, sx1, sy1, fill="#FBFCFE", outline=""
+                )
+
+            # Garis dekoratif ungu.
+            line_y = sy0 + cell_h * 0.18
+            canvas.create_line(
+                sx0 + cell_w * 0.10, line_y,
+                sx0 + cell_w * 0.45, line_y,
+                fill="#6868DC", width=2,
+            )
+
+            font_size = max(7, min(12, int(min(cell_w, cell_h) / 15)))
+            canvas.create_text(
+                (sx0 + sx1) / 2,
+                (sy0 + sy1) / 2,
+                text=str(i + 1),
+                fill="#8A94A6",
+                font=("Segoe UI", font_size, "bold"),
+            )
+
+        self.preview_badge.config(text=f"{slides_per_page} slide / lembar")
+        self.preview_info.config(
+            text=(
+                f"{PAPER_SIZE} • {self.orientation_var.get()} • Auto Center"
+            )
+        )
+
+    def _parse_grid(self):
+        """Baca cols/rows dari entry; fallback & clamp agar selalu valid."""
+        try:
+            cols = int(self.cols_var.get())
+            rows = int(self.rows_var.get())
+        except ValueError:
+            cols, rows = 3, 2
+
+        cols = max(MIN_GRID, min(MAX_GRID, cols))
+        rows = max(MIN_GRID, min(MAX_GRID, rows))
+        return cols, rows
+
+    # ==========================================================
+    # VALIDASI
+    # ==========================================================
+
+    def validate_settings(self):
+        try:
+            cols = int(self.cols_var.get())
+            rows = int(self.rows_var.get())
+        except ValueError:
+            raise ValueError("Kolom dan baris harus berupa angka.")
+
+        if cols < MIN_GRID or cols > MAX_GRID:
+            raise ValueError("Kolom harus antara 1 sampai 100.")
+
+        if rows < MIN_GRID or rows > MAX_GRID:
+            raise ValueError("Baris harus antara 1 sampai 100.")
+
+        slides_per_page = cols * rows
+        if slides_per_page > MAX_SLIDES_PER_PAGE:
+            raise ValueError("Jumlah slide per halaman maksimal 100.")
+
+        return cols, rows, slides_per_page
+
+    # ==========================================================
+    # PROSES
+    # ==========================================================
+
+    def start_process(self):
+        if not self.files:
+            messagebox.showwarning(
+                "Belum Ada PDF", "Tambahkan minimal satu file PDF."
+            )
+            return
+
+        try:
+            self.validate_settings()
+        except ValueError as e:
+            messagebox.showerror("Pengaturan Tidak Valid", str(e))
+            return
+
+        filename = self.output_name_var.get().strip() or "Hasil_Gabungan.pdf"
+        if not filename.lower().endswith(".pdf"):
+            filename += ".pdf"
+
+        output_path = filedialog.asksaveasfilename(
+            title="Simpan PDF hasil",
+            initialfile=filename,
+            defaultextension=".pdf",
+            filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+        )
+
+        if not output_path:
+            self.status_var.set("Penyimpanan dibatalkan.")
+            return
+
+        if not output_path.lower().endswith(".pdf"):
+            output_path += ".pdf"
+
+        self.output_name_var.set(os.path.basename(output_path))
+
+        overwrite_source = False
+        if normalize_key(output_path) in {normalize_key(p) for p in self.files}:
+            if not messagebox.askyesno(
+                "Timpa File Sumber?",
+                "File hasil bernama SAMA dengan salah satu file sumber:\n\n"
+                f"{os.path.basename(output_path)}\n\n"
+                "File sumber tersebut akan DITIMPA (diganti) dengan hasil.\n"
+                "Lanjutkan?",
+                icon="warning",
+            ):
+                self.status_var.set("Dibatalkan — nama sama dengan file sumber.")
+                return
+            overwrite_source = True
+
+        self.process_button.config(state="disabled")
+        self.progress["value"] = 0
+        self.status_var.set("Memulai proses...")
+
+        threading.Thread(
+            target=self._run_pipeline,
+            args=(output_path, overwrite_source),
+            daemon=True,
+        ).start()
+
+    def _run_pipeline(self, output_path, overwrite_source=False):
+        """Dijalankan di worker thread; semua update UI via root.after."""
+        cols, rows, _ = self.validate_settings()
+
+        def on_status(text):
+            self.root.after(0, lambda: self.status_var.set(text))
+
+        def on_progress(value):
+            self.root.after(0, lambda: self.progress.configure(value=value))
+
+        try:
+            process_all(
+                input_paths=list(self.files),
+                output_path=output_path,
+                cols=cols,
+                rows=rows,
+                orientation=self.orientation_var.get(),
+                number_slides=self.number_var.get(),
+                on_status=on_status,
+                on_progress=on_progress,
+                allow_overwrite_source=overwrite_source,
+            )
+            self.root.after(0, lambda: self.finished(output_path))
+        except Exception as e:
+            self.root.after(0, lambda err=str(e): self.failed(err))
+
+    # ==========================================================
+    # CALLBACK SELESAI / GAGAL
+    # ==========================================================
+
+    def finished(self, output_path):
+        self.process_button.config(state="normal")
+        self.progress["value"] = 100
+
+        size_text = format_size(file_size(output_path))
+        self.status_var.set(f"SELESAI — PDF dibuat ({size_text}).")
+
+        if messagebox.askyesno(
+            "Berhasil",
+            "PDF berhasil dibuat!\n\n"
+            f"{output_path}\n"
+            f"Ukuran file: {size_text}\n\n"
+            "Buka folder hasil?",
+        ):
+            open_folder(os.path.dirname(output_path))
+
+    def failed(self, error):
+        self.process_button.config(state="normal")
+        self.status_var.set("Gagal memproses PDF.")
+        messagebox.showerror(
+            "Gagal Memproses", f"Terjadi kesalahan:\n\n{error}"
+        )
+
+
+
+
+
+
+

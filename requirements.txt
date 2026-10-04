@@ -1,0 +1,6 @@
+# Wajib: manipulasi PDF
+PyMuPDF>=1.23.0
+
+# Opsional: drag & drop file ke jendela
+# Jika tidak dipasang, aplikasi tetap jalan (pakai tombol "Tambah PDF").
+tkinterdnd2>=0.3.0
