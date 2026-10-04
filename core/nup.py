@@ -114,6 +114,7 @@ def create_nup_pdf(
     rows,
     orientation,
     number_slides=False,
+    pad_even=True,
 ):
     """Buat PDF N-up dari satu file sumber.
 
@@ -124,6 +125,10 @@ def create_nup_pdf(
         rows: jumlah baris grid.
         orientation: "Portrait" atau "Landscape".
         number_slides: bila True, tulis "Slide N" di area atas tiap sel.
+        pad_even: bila True (default), jumlah halaman hasil dibuat GENAP.
+            Jika hasil ganjil, ditambahkan satu halaman kosong (A4, orientasi
+            sama) di akhir file. Ini memastikan tiap file mulai di halaman
+            baru saat digabung (mis. untuk cetak duplex / bolak-balik).
     """
     source = pymupdf.open(input_path)
     result = pymupdf.open()
@@ -161,6 +166,11 @@ def create_nup_pdf(
                         color=(0.2, 0.2, 0.2),
                         align=1,
                     )
+
+        # Genapkan: bila jumlah halaman hasil ganjil, tambah 1 halaman kosong
+        # agar tiap file selalu punya jumlah halaman genap sebelum digabung.
+        if pad_even and len(result) % 2 == 1:
+            result.new_page(width=width, height=height)
 
         # Penting: TIDAK ADA border pada PDF hasil.
         result.save(output_path, garbage=4, deflate=True)

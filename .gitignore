@@ -22,3 +22,10 @@ src/.env
 installer/*.exe
 installer/*.bin
 
+# --- Build installer PDF Multi Slide Pro ---
+# Sumber build TETAP di-commit (spec, iss, script, ikon).
+!build_assets/PDFMultiSlidePro.spec
+!build_assets/*.iss
+*.log
+
+

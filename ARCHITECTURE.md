@@ -110,14 +110,17 @@ Tanggung jawab kini terpisah secara fisik antar folder:
 - Validasi terpusat di `validate_settings()`.
 
 ### 3.4 Core / PDF Engine (Model) — `core/`
-- `create_nup_pdf(input, output, cols, rows, orientation, number_slides)` — **fungsi inti**.
+- `create_nup_pdf(input, output, cols, rows, orientation, number_slides, pad_even=True)` — **fungsi inti**.
   - **Headless**: tidak mengimpor tkinter; semua parameter eksplisit.
   - `page.show_pdf_page()` → **vector embed**, bukan rasterisasi → kualitas & ukuran optimal.
   - Auto-center: letterbox menjaga aspect ratio sumber di dalam cell (`fit_rect_in_cell`).
+  - `pad_even=True` (default): jumlah halaman hasil **tiap file** digenapkan
+    (ditambah 1 halaman kosong bila ganjil) agar tiap file mulai di halaman baru.
   - Helper murni: `compute_page_geometry()`, `compute_grid()`, `compute_cell_rect()`,
     `fit_rect_in_cell()` — bisa di-unit-test tanpa I/O.
 - `process_all(input_paths, output_path, cols, rows, orientation, number_slides,
-  on_status, on_progress)` — orkestrasi batch (loop file → temp → merge → cleanup).
+  on_status, on_progress, allow_overwrite_source, pad_even=True)` — orkestrasi
+  batch (loop file → temp → merge → cleanup). `pad_even` diteruskan per file.
   - Melaporkan kemajuan via callback, bukan dengan menyentuh widget.
 
 ### 3.5 Utils — `utils/fs.py`

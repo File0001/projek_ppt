@@ -12,6 +12,7 @@
 | **Baru (modular, GUI)** | `main.py` + `core/` + `ui/` + `utils/` | **AKTIF** |
 | **Baru (CLI)** | `cli.py` | **AKTIF** — headless/batch |
 | Lama (monolit) | `PDF_Multi_Slide_Layout_Rapi(1).py` | Backup utuh, jangan diubah tanpa izin |
+| **Build / Distribusi** | `build_assets/` → `dist/` | **AKTIF** — portable `.exe` + installer `.exe` |
 
 Perilaku konversi **identik** (diverifikasi: `tests/smoke_nup.py` + `tests/smoke_cli.py`).
 Fase 2: pemisahan `core/ui/utils` (core headless). Fase 3: CLI mode +
@@ -146,7 +147,8 @@ start_process()
 
 process_all(output_path)   [THREAD]
  ├── for i, source in enumerate(self.files, 1):
- │      create_nup_pdf(source, temp_path_i)   → tulis PDF temp
+ │      create_nup_pdf(source, temp_path_i, pad_even=True)  → tulis PDF temp
+ │      └─ hasil TIAP file digenapkan jumlah halamannya SEBELUM digabung
  │      set_progress(i/total * 80)
  ├── set_status("Menggabungkan...")
  ├── final = fitz.open()
@@ -157,7 +159,7 @@ process_all(output_path)   [THREAD]
      (on exception → hapus temp + root.after(0, failed(err)))
 ```
 
-### 5.4 Inti N-up — `create_nup_pdf(input, output)`
+### 5.4 Inti N-up — `create_nup_pdf(input, output, ..., pad_even=True)`
 ```
 source = fitz.open(input);  result = fitz.open()
 width, height = A4 (595.2756 × 841.8898 pt)
@@ -181,6 +183,9 @@ for start in range(0, len(source), slides_per_page):
         target = Rect di tengah cell dengan ukuran hasil fit
         page.show_pdf_page(target, source, slide_index)   # tempatkan slide
         if number_var: page.insert_textbox("Slide N", fontsize=7)
+# GENAPKAN: bila jumlah halaman hasil ganjil → tambah 1 halaman kosong
+# (A4, orientasi sama) agar tiap file selalu genap sebelum digabung.
+if pad_even and len(result) % 2 == 1: result.new_page(width, height)
 source.close();  result.save(output, garbage=4, deflate=True);  result.close()
 ```
 
@@ -306,6 +311,20 @@ Versi lama (backup):
 python "PDF_Multi_Slide_Layout_Rapi(1).py"
 ```
 
+### Build `.exe` & installer
+
+```powershell
+# 1 perintah: cek prasyarat → PyInstaller → Inno Setup → verifikasi
+powershell -ExecutionPolicy Bypass -File build_assets\build.ps1
+
+# Hanya .exe (tanpa installer) / bersihkan dulu
+... -File build_assets\build.ps1 -SkipInstaller
+... -File build_assets\build.ps1 -Clean
+```
+
+Hasil: `dist\PDFMultiSlidePro-Portable.exe` (36 MB, 1 file) dan
+`dist\installer\PDFMultiSlidePro-Setup-1.0.0.exe` (58 MB). Detail: `build_assets/README.md`.
+
 ---
 
 ## 10. Aturan Kerja (dari .clinerules)
@@ -327,12 +346,18 @@ Sudah selesai:
 - ✅ Fase 1: `requirements.txt`, `README.md`, konstanta `MM_TO_PT`/`A4_*`.
 - ✅ Fase 2: struktur `core/` `ui/` `utils/` + `main.py`; core headless.
 - ✅ Fase 3: **CLI mode** (`cli.py`) + **migrasi `import fitz` → `import pymupdf`**.
+- ✅ **Build & Installer**: `build_assets/` (spec PyInstaller + Inno Setup + `build.ps1`).
+  Menghasilkan portable `.exe` (36 MB) + installer `.exe` (58 MB). Modul
+  `numpy/pandas/scipy` di-exclude (exe turun dari 84 MB). Ikon aplikasi multi-resolusi.
+- ✅ **Penggenapan per file**: tiap file digenapkan jumlah halamannya sebelum
+  digabung (`pad_even=True` default di `create_nup_pdf`/`process_all`).
 
 Belum:
 1. **Unit test lebih lengkap** (pytest) untuk `compute_grid`/`fit_rect_in_cell` (edge case ratio).
 2. **Cancel token** di GUI (hentikan proses besar di tengah jalan).
 3. Pertimbangkan reservasi area nomor slide agar tidak menutupi konten.
 4. (Opsional) dukung `--number` CLI menulis nomor pada margin, bukan overlay.
+5. (Opsional) **Code signing** installer agar tidak muncul peringatan SmartScreen.
 
 
 ---
@@ -346,10 +371,23 @@ Belum:
 5. Ganti orientasi Landscape↔Portrait → preview berubah.
 6. Klik JADIKAN PDF → Save As → proses jalan, progress sampai 100, folder terbuka.
 7. Buka PDF hasil → 6 slide/lembar, rasio terjaga, tidak ada border (jika border off).
+7b. Pastikan **setiap file** menghasilkan jumlah halaman **genap** (bila sumber
+    menghasilkan ganjil, ada 1 halaman kosong di akhir file itu) — cek dengan
+    membuka hasil dan menghitung halaman per bagian file.
 8. Aktifkan "nomor slide" → PDF hasil menampilkan "Slide N".
 9. Coba input kolom = 0 / `abc` → muncul dialog error.
 10. Coba simpan dengan nama sama seperti file sumber → dialog error, proses batal.
 11. Pastikan tidak ada file `__PDF_MULTI_TEMP_*` tersisa setelah proses.
+
+### Verifikasi versi build (installer/portable)
+
+12. Jalankan `dist\PDFMultiSlidePro-Portable.exe` → jendela muncul (judul
+    "PDF ke Slide • Multi Slide Pro"), ikon tampil, dragging file PDF jalan.
+13. Install `dist\installer\PDFMultiSlidePro-Setup-1.0.0.exe` → cek shortcut
+    Start Menu + Desktop, lalu buka dari shortcut.
+14. Uninstall lewat "Apps & features" (atau `uninst000.exe`) → folder install
+    terhapus (sisa file terkunci baru hilang setelah reboot bila app masih jalan).
+15. Konversi PDF nyata dari versi build → hasil identik dengan versi source.
 
 
 

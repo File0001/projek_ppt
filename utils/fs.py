@@ -11,6 +11,27 @@ def normalize_key(path):
     return os.path.abspath(path).lower()
 
 
+def resource_path(relative):
+    """Path absolut ke resource, sadar PyInstaller (onefile/onedir).
+
+    - Dibundel: sys._MEIPASS berisi folder ekstraksi sementara.
+    - Saat dikembangkan: relatif terhadap root project (dua level di atas file ini).
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if base is None:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
+def app_icon_path():
+    """Kandidat path ikon aplikasi (None bila tidak ada)."""
+    for name in ("build_assets/app.ico", "app.ico"):
+        candidate = resource_path(name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def make_temp_path(output_path, number):
     """Path temp unik di folder output: __PDF_MULTI_TEMP_{number}.pdf.
 

@@ -36,10 +36,10 @@ def main_test():
 
     out = os.path.join(tmp, "out.pdf")
 
-    # Sukses, quiet.
+    # Sukses, quiet. pad_even default: a(8)=2 hal (genap), b(3)=1 -> 2 (digenapkan) = 4.
     code = main(["-o", out, "-q", "-c", "3", "-r", "2", src_a, src_b])
     assert code == 0, f"exit harus 0, dapat {code}"
-    assert page_count(out) == 3, "harusnya 3 halaman"
+    assert page_count(out) == 4, "harusnya 4 halaman (tiap file digenapkan)"
     print(f"[OK] CLI sukses: {page_count(out)} halaman, exit {code}")
 
     # Output sama dengan sumber → error exit 2.

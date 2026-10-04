@@ -22,6 +22,7 @@ def process_all(
     on_status=None,
     on_progress=None,
     allow_overwrite_source=False,
+    pad_even=True,
 ):
     """Proses semua PDF lalu gabungkan jadi satu file output.
 
@@ -37,6 +38,9 @@ def process_all(
             sama dengan file sumber. Bila True, mengizinkan menimpa file
             sumber (caller sudah mengonfirmasi; aman karena sumber hanya
             dibaca sebelum output final ditulis).
+        pad_even: bila True (default), jumlah halaman hasil TIAP file
+            dibuat genap (ditambah 1 halaman kosong bila ganjil) SEBELUM
+            digabung. Ini memastikan tiap file mulai di halaman baru.
 
     Raises:
         ValueError: output sama dengan sumber padahal tidak diizinkan.
@@ -81,6 +85,7 @@ def process_all(
                 rows=rows,
                 orientation=orientation,
                 number_slides=number_slides,
+                pad_even=pad_even,
             )
 
             progress((i / total) * 80)

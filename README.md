@@ -13,6 +13,8 @@ yang disusun dalam grid rapi — siap dicetak sebagai handout atau dipresentasik
 - **Orientasi** Portrait / Landscape.
 - **Preview A4 live** yang ikut berubah saat pengaturan diubah.
 - Opsi **nomor slide** pada PDF hasil.
+- **Setiap file digenapkan** jumlah halamannya sebelum digabung (bila hasil
+  ganjil, ditambah 1 halaman kosong) — tiap file mulai di halaman baru.
 - Proses di **background thread** (UI tidak freeze) + progress bar.
 
 ---
