@@ -21,14 +21,15 @@ from core.constants import (
     ORIENTATION_PORTRAIT,
 )
 from core.pipeline import process_all
+from core.convert import is_supported
 from utils.fs import file_size, format_size
 
 
 def expand_inputs(patterns):
-    """Kembangkan glob pattern jadi daftar file PDF yang ada (urutan terjaga).
+    """Kembangkan glob pattern jadi daftar file yang ada (urutan terjaga).
 
-    Normalisasi separator agar path bergaya Unix ('folder/file.pdf') tetap
-    dikenali di Windows.
+    Menerima PDF, gambar, dan PowerPoint. Normalisasi separator agar
+    path bergaya Unix ('folder/file.pdf') tetap dikenali di Windows.
     """
     paths = []
     for pattern in patterns:
@@ -40,7 +41,7 @@ def expand_inputs(patterns):
             matches = [pattern]
 
         for match in matches:
-            if os.path.isfile(match) and match.lower().endswith(".pdf"):
+            if os.path.isfile(match) and is_supported(match):
                 paths.append(match)
 
     # Dedup case-insensitive, jaga urutan.
@@ -74,15 +75,18 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="pdf-multi-slide",
         description=(
-            "Gabungkan PDF menjadi satu PDF N-up (beberapa slide per "
-            "halaman A4). Tanpa GUI."
+            "Gabungkan PDF/gambar/PowerPoint menjadi satu PDF N-up "
+            "(beberapa slide per halaman A4). Tanpa GUI."
         ),
     )
 
     parser.add_argument(
         "inputs",
         nargs="+",
-        help="File PDF sumber (boleh beberapa; mendukung pattern seperti *.pdf).",
+        help=(
+            "File sumber (boleh beberapa; PDF, gambar, atau PPT). "
+            "Mendukung pattern seperti *.pdf / *.pptx."
+        ),
     )
     parser.add_argument(
         "-o", "--output",
@@ -111,6 +115,15 @@ def build_parser():
         "-n", "--number",
         action="store_true",
         help="Tulis nomor slide pada PDF hasil.",
+    )
+    parser.add_argument(
+        "-d", "--duplex",
+        action="store_true",
+        help=(
+            "Mode bolak-balik: jumlah halaman hasil TIAP file digenapkan "
+            "(tambah 1 halaman kosong bila ganjil) agar tiap file mulai di "
+            "halaman depan."
+        ),
     )
     parser.add_argument(
         "-q", "--quiet",
@@ -148,7 +161,7 @@ def main(argv=None):
 
     inputs = expand_inputs(args.inputs)
     if not inputs:
-        parser.error("Tidak ada file PDF valid yang ditemukan.")
+        parser.error("Tidak ada file valid yang ditemukan.")
 
     slides_per_page = args.cols * args.rows
     if slides_per_page > MAX_SLIDES_PER_PAGE:
@@ -176,7 +189,7 @@ def main(argv=None):
 
     if not args.quiet:
         print(
-            f"Memproses {len(inputs)} PDF → {args.cols}x{args.rows} "
+            f"Memproses {len(inputs)} file → {args.cols}x{args.rows} "
             f"({slides_per_page} slide/lembar), {args.orientation}",
             file=sys.stderr,
         )
@@ -192,6 +205,7 @@ def main(argv=None):
             on_status=on_status,
             on_progress=on_progress,
             allow_overwrite_source=overwrite_source,
+            pad_even=args.duplex,
         )
     except Exception as error:
         sys.stderr.write("\n")

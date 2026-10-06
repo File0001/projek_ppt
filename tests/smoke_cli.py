@@ -36,11 +36,19 @@ def main_test():
 
     out = os.path.join(tmp, "out.pdf")
 
-    # Sukses, quiet. pad_even default: a(8)=2 hal (genap), b(3)=1 -> 2 (digenapkan) = 4.
+    # Tanpa --duplex (default): tidak ada halaman kosong.
+    # a(8)=2 hal, b(3)=1 hal -> total 3 (b TIDAK digenapkan).
     code = main(["-o", out, "-q", "-c", "3", "-r", "2", src_a, src_b])
     assert code == 0, f"exit harus 0, dapat {code}"
-    assert page_count(out) == 4, "harusnya 4 halaman (tiap file digenapkan)"
-    print(f"[OK] CLI sukses: {page_count(out)} halaman, exit {code}")
+    assert page_count(out) == 3, "tanpa --duplex harusnya 3 halaman"
+    print(f"[OK] CLI default (tanpa duplex): {page_count(out)} halaman, exit {code}")
+
+    # Dengan --duplex: tiap file digenapkan. a(8)=2 hal (genap), b(3)=1 -> 2.
+    out_dup = os.path.join(tmp, "out_duplex.pdf")
+    code = main(["-o", out_dup, "-q", "-c", "3", "-r", "2", "-d", src_a, src_b])
+    assert code == 0, f"exit harus 0, dapat {code}"
+    assert page_count(out_dup) == 4, "dengan --duplex harusnya 4 halaman"
+    print(f"[OK] CLI --duplex: {page_count(out_dup)} halaman (tiap file digenapkan)")
 
     # Output sama dengan sumber → error exit 2.
     try:

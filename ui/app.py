@@ -17,11 +17,22 @@ from core.constants import (
     PAPER_SIZE,
     MIN_GRID,
 )
+from core.convert import SUPPORTED_EXTS, file_kind
 from core.nup import LayoutError, compute_cell_rect, compute_grid, compute_page_geometry
 from core.pipeline import process_all
 from ui import widgets
 from ui.styles import create_styles
 from utils.fs import file_size, format_size, normalize_key, open_folder
+
+# Pola filetype untuk dialog "buka file" (Tk) yang mencakup semua tipe didukung.
+_OPEN_FILETYPES = [
+    ("Semua file didukung", "*.pdf *.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp *.pptx *.ppt"),
+    ("PDF", "*.pdf"),
+    ("Gambar", "*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp"),
+    ("PowerPoint", "*.pptx *.ppt"),
+    ("Semua file", "*.*"),
+]
+
 
 # Drag & drop opsional.
 try:
@@ -88,7 +99,7 @@ class PDFMultiSlidePro:
 
         ttk.Label(
             title_line,
-            text="Ubah PDF jadi presentasi",
+            text="Ubah dokumen jadi presentasi",
             style="Title.TLabel",
         ).pack(side="left")
 
@@ -99,8 +110,8 @@ class PDFMultiSlidePro:
         ttk.Label(
             header,
             text=(
-                "Susun PDF menjadi beberapa slide "
-                "dalam satu halaman dengan layout yang rapi."
+                "Susun PDF, gambar, atau PowerPoint menjadi "
+                "beberapa slide dalam satu halaman dengan layout rapi."
             ),
             style="Subtitle.TLabel",
         ).pack(anchor="w", pady=(3, 0))
@@ -117,7 +128,7 @@ class PDFMultiSlidePro:
         header = ttk.Frame(left, style="Card.TFrame")
         header.pack(fill="x")
 
-        ttk.Label(header, text="Daftar PDF", style="Section.TLabel").pack(
+        ttk.Label(header, text="Daftar file", style="Section.TLabel").pack(
             side="left"
         )
 
@@ -152,7 +163,7 @@ class PDFMultiSlidePro:
 
         ttk.Button(
             file_buttons,
-            text="＋  Tambah PDF",
+            text="＋  Tambah file",
             style="Main.TButton",
             command=self.add_files,
         ).pack(fill="x")
@@ -178,7 +189,7 @@ class PDFMultiSlidePro:
 
         ttk.Label(
             left,
-            text="Seret PDF ke area mana pun untuk menambahkannya.",
+            text="Seret file (PDF, gambar, PPT) ke sini.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(7, 0))
 
@@ -330,6 +341,7 @@ class PDFMultiSlidePro:
 
         self.border_var = tk.BooleanVar(value=True)
         self.number_var = tk.BooleanVar(value=False)
+        self.duplex_var = tk.BooleanVar(value=True)
 
         ttk.Checkbutton(
             right,
@@ -352,6 +364,20 @@ class PDFMultiSlidePro:
             right,
             text="Nomor ditambahkan pada bagian atas slide.",
             style="Muted.TLabel",
+        ).pack(anchor="w", padx=(24, 0))
+
+        ttk.Checkbutton(
+            right,
+            text="Bolak-balik (duplex)",
+            variable=self.duplex_var,
+        ).pack(anchor="w", pady=(9, 2))
+        ttk.Label(
+            right,
+            text="Tambahkan halaman kosong bila hasil tiap file ganjil, "
+            "agar tiap file mulai di halaman depan.",
+            style="Muted.TLabel",
+            wraplength=240,
+            justify="left",
         ).pack(anchor="w", padx=(24, 0))
 
     def _build_process_button(self, right):
@@ -400,7 +426,7 @@ class PDFMultiSlidePro:
         status_box.pack(side="left", fill="x", expand=True, padx=(0, 15))
 
         self.status_var = tk.StringVar(
-            value="Siap. Tambahkan file PDF untuk memulai."
+            value="Siap. Tambahkan file untuk memulai."
         )
         ttk.Label(
             status_box,
@@ -440,21 +466,21 @@ class PDFMultiSlidePro:
 
     def handle_drop(self, event):
         try:
-            paths = self.root.tk.splitlist(event.data)
+            paths_raw = self.root.tk.splitlist(event.data)
         except Exception:
-            paths = [event.data]
+            paths_raw = [event.data]
 
-        pdf_paths = []
-        for path in paths:
+        paths = []
+        for path in paths_raw:
             path = path.strip()
             if path.startswith("{") and path.endswith("}"):
                 path = path[1:-1]
 
-            if os.path.isfile(path) and path.lower().endswith(".pdf"):
-                pdf_paths.append(path)
+            if os.path.isfile(path) and file_kind(path) != "unknown":
+                paths.append(path)
 
-        if pdf_paths:
-            self.add_dropped_files(pdf_paths)
+        if paths:
+            self.add_dropped_files(paths)
 
         return "break"
 
@@ -471,25 +497,42 @@ class PDFMultiSlidePro:
             if key in existing:
                 continue
 
-            try:
-                doc = pymupdf.open(path)
-                doc.close()
+            if not self._is_readable(path):
+                continue
 
-                self.files.append(path)
-                existing.add(key)
-                added += 1
-            except Exception:
-                pass
+            self.files.append(path)
+            existing.add(key)
+            added += 1
 
         self.refresh_tree()
 
         if added:
-            self.status_var.set(f"{added} PDF berhasil ditambahkan.")
+            self.status_var.set(f"{added} file berhasil ditambahkan.")
+
+    @staticmethod
+    def _is_readable(path):
+        """True bila file valid & bisa dibaca.
+
+        PDF & gambar divalidasi dengan PyMuPDF; file office cukup dicek
+        keberadaannya (validasi penuh terjadi saat konversi).
+        """
+        if not os.path.isfile(path):
+            return False
+
+        kind = file_kind(path)
+        if kind in ("pdf", "image"):
+            try:
+                doc = pymupdf.open(path)
+                doc.close()
+            except Exception:
+                return False
+
+        return True
 
     def add_files(self):
         paths = filedialog.askopenfilenames(
-            title="Pilih File PDF",
-            filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+            title="Pilih file (PDF, gambar, atau PowerPoint)",
+            filetypes=_OPEN_FILETYPES,
         )
         if paths:
             self.add_dropped_files(paths)
@@ -500,12 +543,7 @@ class PDFMultiSlidePro:
 
         total_pages = 0
         for path in self.files:
-            try:
-                doc = pymupdf.open(path)
-                pages = len(doc)
-                doc.close()
-            except Exception:
-                pages = "?"
+            pages = self._count_pages(path)
 
             self.tree.insert(
                 "", "end", values=(os.path.basename(path), pages)
@@ -517,6 +555,33 @@ class PDFMultiSlidePro:
         self.file_count_var.set(
             f"{len(self.files)} file • {total_pages} halaman"
         )
+
+    @staticmethod
+    def _count_pages(path):
+        """Perkiraan jumlah halaman (int) atau '?' bila tidak bisa dihitung."""
+        kind = file_kind(path)
+
+        if kind == "image":
+            return 1
+
+        if kind == "pdf":
+            try:
+                doc = pymupdf.open(path)
+                pages = len(doc)
+                doc.close()
+                return pages
+            except Exception:
+                return "?"
+
+        if kind == "ppt":
+            try:
+                from pptx import Presentation
+
+                return len(Presentation(path).slides)
+            except Exception:
+                return "?"
+
+        return "?"
 
     def remove_selected(self):
         selected = self.tree.selection()
@@ -536,10 +601,10 @@ class PDFMultiSlidePro:
         if not self.files:
             return
 
-        if messagebox.askyesno("Konfirmasi", "Hapus semua PDF dari daftar?"):
+        if messagebox.askyesno("Konfirmasi", "Hapus semua file dari daftar?"):
             self.files.clear()
             self.refresh_tree()
-            self.status_var.set("Daftar PDF telah dibersihkan.")
+            self.status_var.set("Daftar file telah dibersihkan.")
 
     # ==========================================================
     # PREVIEW
@@ -673,7 +738,7 @@ class PDFMultiSlidePro:
     def start_process(self):
         if not self.files:
             messagebox.showwarning(
-                "Belum Ada PDF", "Tambahkan minimal satu file PDF."
+                "Belum Ada File", "Tambahkan minimal satu file."
             )
             return
 
@@ -748,6 +813,7 @@ class PDFMultiSlidePro:
                 on_status=on_status,
                 on_progress=on_progress,
                 allow_overwrite_source=overwrite_source,
+                pad_even=self.duplex_var.get(),
             )
             self.root.after(0, lambda: self.finished(output_path))
         except Exception as e:
@@ -775,7 +841,7 @@ class PDFMultiSlidePro:
 
     def failed(self, error):
         self.process_button.config(state="normal")
-        self.status_var.set("Gagal memproses PDF.")
+        self.status_var.set("Gagal memproses.")
         messagebox.showerror(
             "Gagal Memproses", f"Terjadi kesalahan:\n\n{error}"
         )

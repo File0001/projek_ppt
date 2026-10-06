@@ -1,14 +1,23 @@
 # PDF Multi Slide Pro
 
-Aplikasi desktop (Python + tkinter) untuk mengubah satu atau banyak **PDF** menjadi
-satu PDF baru bergaya **N-up**: setiap halaman A4 memuat beberapa slide/halaman sumber
-yang disusun dalam grid rapi — siap dicetak sebagai handout atau dipresentasikan.
+Aplikasi desktop (Python + tkinter) untuk mengubah satu atau banyak dokumen —
+**PDF, gambar, atau PowerPoint** — menjadi satu PDF baru bergaya **N-up**:
+setiap halaman A4 memuat beberapa slide/halaman sumber yang disusun dalam grid
+rapi — siap dicetak sebagai handout atau dipresentasikan.
 
 ---
 
 ## Fitur
 
-- Tambah banyak PDF via dialog atau **drag & drop**.
+- Tambah banyak file (PDF, gambar, `.pptx`/`.ppt`) via dialog
+  atau **drag & drop**.
+- **Konversi otomatis** sumber non-PDF ke PDF sebelum disusun:
+  - **Gambar** (png/jpg/jpeg/bmp/gif/tif/tiff/webp) → 1 gambar = 1 slide.
+  - **PowerPoint** → konversi **format 100% utuh**. Mesin dicoba berurutan:
+    1. **Microsoft PowerPoint** (bila Office terpasang) — paling akurat.
+    2. **LibreOffice/soffice** — sangat akurat, lintas platform.
+    3. **python-pptx** — fallback cepat, tapi **hanya teks**
+       (tema, layout, gambar hilang). `.ppt` lama butuh Office/LibreOffice.
 - Atur **grid** (Kolom × Baris) per halaman A4.
 - **Orientasi** Portrait / Landscape.
 - **Preview A4 live** yang ikut berubah saat pengaturan diubah.
@@ -16,6 +25,7 @@ yang disusun dalam grid rapi — siap dicetak sebagai handout atau dipresentasik
 - **Setiap file digenapkan** jumlah halamannya sebelum digabung (bila hasil
   ganjil, ditambah 1 halaman kosong) — tiap file mulai di halaman baru.
 - Proses di **background thread** (UI tidak freeze) + progress bar.
+
 
 ---
 
@@ -26,7 +36,12 @@ pip install -r requirements.txt
 ```
 
 > `tkinterdnd2` opsional. Bila tidak dipasang, drag & drop dinonaktifkan otomatis;
-> tombol "Tambah PDF" tetap berfungsi.
+> tombol "Tambah file" tetap berfungsi.
+>
+> `python-pptx` juga opsional — hanya dipakai sebagai **fallback
+> terakhir** konversi PPT. Untuk hasil **format 100% utuh**, cukup punya
+> **Microsoft PowerPoint** (otomatis terdeteksi via COM) **atau** **LibreOffice**.
+> Di Windows dengan Office terpasang, tidak perlu memasang apa pun lagi.
 
 **Prasyarat:** Python 3.8+ dan tkinter (biasanya terpasang bersama Python).
 
@@ -56,7 +71,7 @@ Aplikasi versi monolit lama tetap tersedia sebagai backup:
 
 ## Cara Pakai
 
-1. Klik **Tambah PDF** (atau seret file PDF ke jendela).
+1. Klik **Tambah file** (atau seret file ke jendela) — PDF, gambar, atau PPT.
 2. Atur **Kolom** dan **Baris** (mis. 3 × 2 = 6 slide per lembar).
 3. Pilih **Orientasi**.
 4. (Opsional) aktifkan **Tampilkan nomor slide pada PDF**.
@@ -74,8 +89,9 @@ projek_ppt/
 ├── README.md
 ├── core/                   # logika PDF murni (headless, tanpa tkinter)
 │   ├── constants.py        # MM_TO_PT, ukuran A4, batasan grid
+│   ├── convert.py          # gambar/PPT → PDF (soffice + fallback)
 │   ├── nup.py              # hitung layout + create_nup_pdf()
-│   └── pipeline.py         # process_all(): temp → merge → save
+│   └── pipeline.py         # process_all(): konversi → temp → merge → save
 ├── ui/                     # antarmuka
 │   ├── app.py              # class PDFMultiSlidePro (view + controller)
 │   ├── styles.py           # tema ttk

@@ -2,5 +2,15 @@
 PyMuPDF>=1.23.0
 
 # Opsional: drag & drop file ke jendela
-# Jika tidak dipasang, aplikasi tetap jalan (pakai tombol "Tambah PDF").
+# Jika tidak dipasang, aplikasi tetap jalan (pakai tombol "Tambah file").
 tkinterdnd2>=0.3.0
+
+# Opsional: konversi PowerPoint ke PDF format 100% utuh.
+# Prioritas mesin konversi: Microsoft PowerPoint (COM) -> LibreOffice -> fallback.
+# Di Windows + Microsoft Office terpasang, pywin32 diperlukan untuk mode COM.
+pywin32>=306; sys_platform == "win32"
+
+# Opsional: fallback terakhir konversi PowerPoint (hanya teks).
+# Tidak diperlukan bila Microsoft Office atau LibreOffice tersedia.
+python-pptx>=0.6.23
+

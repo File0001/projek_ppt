@@ -43,7 +43,7 @@ def main():
     assert abs(r0.width - 841.8898) < 0.5, "landscape width salah"
     print(f"[OK] single: {pages_single} halaman, ukuran {r0.width:.1f}x{r0.height:.1f}")
 
-    # pipeline gabungan 2 file (default pad_even=True: tiap file digenapkan).
+    # pipeline gabungan 2 file (default pad_even=False: tanpa halaman kosong).
     out_all = os.path.join(tmp, "out_all.pdf")
     statuses = []
     progress = []
@@ -59,13 +59,32 @@ def main():
     doc = pymupdf.open(out_all)
     pages_all = len(doc)
     doc.close()
-    # a: ceil(7/6)=2 (genap), b: ceil(3/6)=1 -> digenapkan jadi 2 -> total 4
-    assert pages_all == 4, f"gabungan harusnya 4 halaman, dapat {pages_all}"
+    # a: ceil(7/6)=2, b: ceil(3/6)=1 -> total 3 (default: tanpa digenapkan)
+    assert pages_all == 3, f"gabungan harusnya 3 halaman, dapat {pages_all}"
     assert progress and progress[-1] == 100, "progress akhir harus 100"
     assert not [f for f in os.listdir(tmp) if f.startswith("__PDF_MULTI_TEMP_")], \
         "temp tidak boleh tersisa"
-    print(f"[OK] pipeline: {pages_all} halaman, progress akhir {progress[-1]}")
+    print(f"[OK] pipeline (default): {pages_all} halaman, progress akhir {progress[-1]}")
     print(f"[OK] status terakhir: {statuses[-1] if statuses else '-'}")
+
+    # pipeline gabungan dengan pad_even=True (mode bolak-balik).
+    out_dup = os.path.join(tmp, "out_dup.pdf")
+    process_all(
+        input_paths=[src_a, src_b],
+        output_path=out_dup,
+        cols=3, rows=2,
+        orientation="Landscape",
+        number_slides=False,
+        on_status=statuses.append,
+        on_progress=progress.append,
+        pad_even=True,
+    )
+    doc = pymupdf.open(out_dup)
+    pages_dup = len(doc)
+    doc.close()
+    # a: ceil(7/6)=2 (genap), b: ceil(3/6)=1 -> digenapkan jadi 2 -> total 4
+    assert pages_dup == 4, f"pad_even=True harusnya 4 halaman, dapat {pages_dup}"
+    print(f"[OK] pipeline pad_even=True (duplex): {pages_dup} halaman")
 
     # pad_even eksplisit: file 3 slide (ganjil -> 2 hal).
     out_pad = os.path.join(tmp, "out_pad.pdf")

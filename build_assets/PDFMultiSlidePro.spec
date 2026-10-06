@@ -45,6 +45,15 @@ except Exception:
 # PyMuPDF kadang butuh submodul ini agar tidak "no module named".
 hiddenimports += ["pymupdf", "pymupdf.utils", "pymupdf._extra"]
 
+# Konversi PowerPoint (opsional): modul diimpor dinamis di dalam fungsi, jadi
+# PyInstaller bisa melewatkannya. Tambahkan bila terpasang.
+for _mod in ("pptx", "win32com", "win32com.client", "pythoncom", "pywintypes"):
+    try:
+        __import__(_mod)
+        hiddenimports.append(_mod)
+    except Exception:
+        pass
+
 # Modul yang TIDAK dipakai aplikasi -> dikecualikan agar exe kecil & cepat.
 # (Terverifikasi: pymupdf tidak mengimpor numpy/pandas/scipy.)
 EXCLUDES = [

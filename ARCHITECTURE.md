@@ -24,6 +24,7 @@ Tanggung jawab kini terpisah secara fisik antar folder:
 ├───────────────────────────────────────────────────────────────┤
 │  core/                   MODEL (headless, TANPA tkinter)       │
 │    constants.py → MM_TO_PT, A4, batasan grid, orientasi        │
+│    convert.py   → gambar/PPT → PDF (soffice + fallback)        │
 │    nup.py       → hitung layout + create_nup_pdf()             │
 │    pipeline.py  → process_all() via callback status/progress   │
 ├───────────────────────────────────────────────────────────────┤
@@ -110,17 +111,36 @@ Tanggung jawab kini terpisah secara fisik antar folder:
 - Validasi terpusat di `validate_settings()`.
 
 ### 3.4 Core / PDF Engine (Model) — `core/`
-- `create_nup_pdf(input, output, cols, rows, orientation, number_slides, pad_even=True)` — **fungsi inti**.
+- `convert.py` — konversi sumber non-PDF ke PDF (headless):
+  - `file_kind(path)` / `is_supported(path)` — deteksi jenis file.
+  - Gambar → 1 halaman PDF seukuran gambar (`insert_image`).
+  - PowerPoint (`.pptx`/`.ppt`) → coba berurutan:
+    1. **Microsoft PowerPoint COM** (`_convert_with_ppt_com`) — Windows +
+       Office → **format 100% utuh**.
+    2. **LibreOffice** (`soffice`, via PATH + lokasi umum) — sangat akurat.
+    3. **Fallback python-pptx** — HANYA teks (format hilang).
+  - **Penting**: Microsoft PowerPoint COM / LibreOffice = cara hasil **akurat**
+    (tema, gambar, layout, text box). Tanpa keduanya, fallback hanya menyalin
+    **teks** via `insert_text` + word-wrap (`_wrap_text`); format hilang.
+    Format `.ppt` lama **hanya** bisa via Office/LibreOffice.
+  - `images_to_pdf(list, output)` — gabung BANYAK gambar → SATU PDF (1 gambar = 1 halaman).
+  - `convert_to_pdf(input, output)` — entry utama (raise `ValueError` bila tak didukung).
+- `create_nup_pdf(input, output, cols, rows, orientation, number_slides, pad_even=False)` — **fungsi inti**.
   - **Headless**: tidak mengimpor tkinter; semua parameter eksplisit.
   - `page.show_pdf_page()` → **vector embed**, bukan rasterisasi → kualitas & ukuran optimal.
   - Auto-center: letterbox menjaga aspect ratio sumber di dalam cell (`fit_rect_in_cell`).
-  - `pad_even=True` (default): jumlah halaman hasil **tiap file** digenapkan
-    (ditambah 1 halaman kosong bila ganjil) agar tiap file mulai di halaman baru.
+  - `pad_even=True` (opsi "Bolak-balik"): jumlah halaman hasil **tiap file**
+    digenapkan (ditambah 1 halaman kosong bila ganjil) agar tiap file mulai di
+    halaman baru. Default `False` (tidak menambah halaman kosong).
   - Helper murni: `compute_page_geometry()`, `compute_grid()`, `compute_cell_rect()`,
     `fit_rect_in_cell()` — bisa di-unit-test tanpa I/O.
 - `process_all(input_paths, output_path, cols, rows, orientation, number_slides,
-  on_status, on_progress, allow_overwrite_source, pad_even=True)` — orkestrasi
-  batch (loop file → temp → merge → cleanup). `pad_even` diteruskan per file.
+  on_status, on_progress, allow_overwrite_source, pad_even=False)` — orkestrasi
+  batch (loop file → **konversi non-PDF** → temp → merge → cleanup).
+  `pad_even` diteruskan per file (dari checkbox "Bolak-balik" di GUI / `--duplex` di CLI).
+  - Sumber non-PDF dikonversi ke PDF temp lebih dulu (`core.convert`).
+  - `temp_files` (hasil N-up, untuk merge) dipisah dari `cleanup_files`
+    (semua temp, untuk penghapusan) agar PDF hasil konversi tidak ikut tergabung.
   - Melaporkan kemajuan via callback, bukan dengan menyentuh widget.
 
 ### 3.5 Utils — `utils/fs.py`
@@ -129,9 +149,10 @@ Tanggung jawab kini terpisah secara fisik antar folder:
 
 ### 3.6 Entry Points
 - `main.py` — bootstrap GUI (pilih TkinterDnD.Tk atau tk.Tk, lalu `PDFMultiSlidePro`).
-- `cli.py` — argparse → `expand_inputs` (glob + dedup) → `core.pipeline.process_all`
-  dengan reporter status/progress ke `stderr`. Tanpa tkinter. Guard: input valid,
-  output ≠ sumber, ekstensi `.pdf` otomatis, batas slide/halaman.
+- `cli.py` — argparse → `expand_inputs` (glob + dedup untuk PDF/gambar/PPT)
+  → `core.pipeline.process_all` dengan reporter status/progress ke `stderr`.
+  Tanpa tkinter. Guard: input valid, output ≠ sumber, ekstensi `.pdf` otomatis,
+  batas slide/halaman.
 
 
 

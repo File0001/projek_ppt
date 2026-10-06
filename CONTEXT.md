@@ -1,7 +1,7 @@
 # CONTEXT.md — PDF Multi Slide Pro
 
 > Checkpoint konteks proyek. Baca file ini terlebih dahulu sebelum mengubah kode.
-> Terakhir diperbarui: **Fase 3 — CLI + migrasi PyMuPDF**.
+> Terakhir diperbarui: **Fase 4 — dukungan multi-format (gambar/PPT)**.
 
 ---
 
@@ -17,6 +17,12 @@
 Perilaku konversi **identik** (diverifikasi: `tests/smoke_nup.py` + `tests/smoke_cli.py`).
 Fase 2: pemisahan `core/ui/utils` (core headless). Fase 3: CLI mode +
 migrasi `import fitz` → `import pymupdf` (peringatan deprecation hilang).
+Fase 4: sumber kini bisa **PDF, gambar, atau PowerPoint** — konversi
+otomatis ke PDF via `core/convert.py` (Microsoft PowerPoint COM → LibreOffice →
+fallback python-pptx).
+Proses **dua fase**: (1) semua sumber diubah ke PDF — **semua gambar digabung
+jadi SATU PDF**, tiap PPT jadi PDF sendiri; (2) baru di-N-up. Diverifikasi:
+`tests/smoke_convert.py`.
 
 ---
 
@@ -36,7 +42,9 @@ dokumen PDF hasil yang "rapi" dan siap dipresentasikan/dicetak (mis. handout).
 
 ## 2. Fitur Utama
 
-1. **Tambah banyak file PDF** — via dialog file, atau **drag & drop** (opsional).
+1. **Tambah banyak file** — PDF, gambar, atau PowerPoint; via dialog file,
+   atau **drag & drop** (opsional). Sumber non-PDF dikonversi otomatis ke PDF
+   (lihat `core/convert.py`).
 2. **Manajemen daftar file** — tampil dalam tabel (nama file + jumlah halaman),
    bisa hapus file terpilih / bersihkan semua.
 3. **Pengaturan tata letak** — jumlah **Kolom × Baris** (grid) per halaman A4.
@@ -46,6 +54,9 @@ dokumen PDF hasil yang "rapi" dan siap dipresentasikan/dicetak (mis. handout).
 6. **Opsi output:**
    - Tampilkan **kotak border** (hanya di preview, bukan di PDF akhir).
    - Tampilkan **nomor slide** ("Slide N") di PDF hasil.
+   - **Bolak-balik (duplex)** — bila dicentang (default), jumlah halaman hasil
+     tiap file digenapkan (tambah halaman kosong bila ganjil) agar tiap file
+     mulai di halaman depan. Bila tidak dicentang, tidak ada halaman kosong.
    - **Nama file hasil** yang dapat dikustomisasi.
 7. **Progress bar + status** selama proses.
 8. **Proses di background thread** agar UI tidak freeze.
@@ -67,6 +78,8 @@ dokumen PDF hasil yang "rapi" dan siap dipresentasikan/dicetak (mis. handout).
 **Dependensi runtime:**
 - Wajib: `PyMuPDF`
 - Opsional: `tkinterdnd2` (jika tidak ada → drag & drop dinonaktifkan otomatis)
+- Opsional (konversi PPT): `pywin32` (mode COM, Windows + Office),
+  `LibreOffice` (`soffice`), atau `python-pptx` (fallback teks).
 
 ---
 
@@ -79,6 +92,7 @@ projek_ppt/
 ├── cli.py                  # entry point CLI (argparse, headless)
 ├── core/                   # logika PDF murni (headless, tanpa tkinter)
 │   ├── constants.py        # MM_TO_PT, A4, margin/gap, batasan grid, orientasi
+│   ├── convert.py          # gambar/PPT → PDF (soffice + fallback)
 │   ├── nup.py              # compute_* + fit_rect_in_cell + create_nup_pdf()
 │   └── pipeline.py         # process_all(input_paths, params, callbacks)
 ├── ui/                     # antarmuka
@@ -90,7 +104,8 @@ projek_ppt/
 │                           # is_same_file, open_folder (lintas OS)
 ├── tests/
 │   ├── smoke_nup.py        # uji headless core (layout + pipeline)
-│   └── smoke_cli.py        # uji CLI (argparse, guard, ekstensi)
+│   ├── smoke_cli.py        # uji CLI (argparse, guard, ekstensi)
+│   └── smoke_convert.py    # uji konversi gambar/pptx/pdf → PDF
 ├── requirements.txt
 ├── README.md
 ├── CONTEXT.md              # dokumen ini
@@ -147,8 +162,9 @@ start_process()
 
 process_all(output_path)   [THREAD]
  ├── for i, source in enumerate(self.files, 1):
- │      create_nup_pdf(source, temp_path_i, pad_even=True)  → tulis PDF temp
- │      └─ hasil TIAP file digenapkan jumlah halamannya SEBELUM digabung
+ │      create_nup_pdf(source, temp_path_i, pad_even=duplex_var)  → tulis PDF temp
+ │      └─ bila pad_even: hasil TIAP file digenapkan (tambah halaman bila ganjil)
+ │         SEBELUM digabung; bila False → tanpa halaman kosong
  │      set_progress(i/total * 80)
  ├── set_status("Menggabungkan...")
  ├── final = fitz.open()
@@ -159,7 +175,7 @@ process_all(output_path)   [THREAD]
      (on exception → hapus temp + root.after(0, failed(err)))
 ```
 
-### 5.4 Inti N-up — `create_nup_pdf(input, output, ..., pad_even=True)`
+### 5.4 Inti N-up — `create_nup_pdf(input, output, ..., pad_even=False)`
 ```
 source = fitz.open(input);  result = fitz.open()
 width, height = A4 (595.2756 × 841.8898 pt)
@@ -211,6 +227,7 @@ source.close();  result.save(output, garbage=4, deflate=True);  result.close()
 | `self.orientation_var` | `StringVar` | `"Landscape"` | Portrait / Landscape |
 | `self.border_var` | `BooleanVar` | `True` | Border di preview saja |
 | `self.number_var` | `BooleanVar` | `False` | Nomor slide di PDF hasil |
+| `self.duplex_var` | `BooleanVar` | `True` | Mode bolak-balik: genapkan halaman tiap file |
 | `self.output_name_var` | `StringVar` | `"Hasil_Gabungan.pdf"` | Nama awal saat Save As |
 | `self.status_var` | `StringVar` | pesan siap | Teks status bawah |
 | `self.tree` | `Treeview` | — | Tabel daftar file |
@@ -251,7 +268,8 @@ source.close();  result.save(output, garbage=4, deflate=True);  result.close()
 │  Nama|Hal.)   │ Canvas A4 live               │ - Kolom × Baris  │
 │ [＋Tambah PDF] │ Footer: status + info        │ - Orientasi      │
 │ [Hapus][Brsih]│                              │ - Opsi output    │
-│ hint DnD      │                              │   (border, nomor)│
+│ hint DnD      │                              │ (border,nomor,   │
+│               │                              │  duplex, nama)   │
 │               │                              │ - Nama file      │
 │               │                              │ - Status valid   │
 ├───────────────┴──────────────────────────────┴──────────────────┤
@@ -349,8 +367,11 @@ Sudah selesai:
 - ✅ **Build & Installer**: `build_assets/` (spec PyInstaller + Inno Setup + `build.ps1`).
   Menghasilkan portable `.exe` (36 MB) + installer `.exe` (58 MB). Modul
   `numpy/pandas/scipy` di-exclude (exe turun dari 84 MB). Ikon aplikasi multi-resolusi.
-- ✅ **Penggenapan per file**: tiap file digenapkan jumlah halamannya sebelum
-  digabung (`pad_even=True` default di `create_nup_pdf`/`process_all`).
+- ✅ **Penggenapan per file (opsi bolak-balik)**: tiap file digenapkan jumlah
+  halamannya sebelum digabung. Kini **dikendalikan checkbox "Bolak-balik
+  (duplex)"** (`self.duplex_var`, default aktif) → diteruskan sebagai
+  `pad_even` ke `create_nup_pdf`/`process_all`. Bila tidak dicentang, tidak ada
+  halaman kosong ditambahkan. CLI: flag `-d`/`--duplex`.
 
 Belum:
 1. **Unit test lebih lengkap** (pytest) untuk `compute_grid`/`fit_rect_in_cell` (edge case ratio).
