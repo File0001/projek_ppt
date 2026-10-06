@@ -22,7 +22,13 @@ from core.nup import LayoutError, compute_cell_rect, compute_grid, compute_page_
 from core.pipeline import process_all
 from ui import widgets
 from ui.styles import create_styles
-from utils.fs import file_size, format_size, normalize_key, open_folder
+from utils.fs import (
+    file_size,
+    format_size,
+    normalize_key,
+    open_folder,
+    unique_path,
+)
 
 # Pola filetype untuk dialog "buka file" (Tk) yang mencakup semua tipe didukung.
 _OPEN_FILETYPES = [
@@ -32,6 +38,18 @@ _OPEN_FILETYPES = [
     ("PowerPoint", "*.pptx *.ppt"),
     ("Semua file", "*.*"),
 ]
+
+
+import re as _re
+
+
+def _strip_trailing_number(stem):
+    """Buang akhiran ' (n)' dari nama dasar; 'Hasil (2)' → 'Hasil'.
+
+    Agar penomoran tetap berkelanjutan walau nama dasar yang diusulkan sudah
+    mengandung nomor dari sesi sebelumnya.
+    """
+    return _re.sub(r"\s*\(\d+\)$", "", stem)
 
 
 # Drag & drop opsional.
@@ -142,14 +160,22 @@ class PDFMultiSlidePro:
 
         self.tree = ttk.Treeview(
             tree_box,
-            columns=("name", "pages"),
+            columns=("no", "name", "pages"),
             show="headings",
             selectmode="extended",
         )
+        self.tree.heading("no", text="#")
         self.tree.heading("name", text="Nama file")
         self.tree.heading("pages", text="Hal.")
-        self.tree.column("name", width=175, anchor="w")
-        self.tree.column("pages", width=45, anchor="center", stretch=False)
+        self.tree.column("no", width=30, anchor="center", stretch=False)
+        self.tree.column("name", width=150, anchor="w")
+        self.tree.column("pages", width=42, anchor="center", stretch=False)
+
+        # Dukung pengurutan: klik-drag baris untuk memindah posisi.
+        self._drag_item = None
+        self.tree.bind("<ButtonPress-1>", self._on_drag_start)
+        self.tree.bind("<B1-Motion>", self._on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_drag_release)
 
         tree_scroll = ttk.Scrollbar(
             tree_box, orient="vertical", command=self.tree.yview
@@ -172,25 +198,44 @@ class PDFMultiSlidePro:
         second_row.pack(fill="x", pady=(5, 0))
         second_row.columnconfigure(0, weight=1)
         second_row.columnconfigure(1, weight=1)
+        second_row.columnconfigure(2, weight=1)
+        second_row.columnconfigure(3, weight=1)
+
+        ttk.Button(
+            second_row,
+            text="▲",
+            style="Main.TButton",
+            command=self.move_selected_up,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+        ttk.Button(
+            second_row,
+            text="▼",
+            style="Main.TButton",
+            command=self.move_selected_down,
+        ).grid(row=0, column=1, sticky="ew", padx=3)
 
         ttk.Button(
             second_row,
             text="Hapus",
             style="Main.TButton",
             command=self.remove_selected,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ).grid(row=0, column=2, sticky="ew", padx=3)
 
         ttk.Button(
             second_row,
             text="Bersihkan",
             style="Main.TButton",
             command=self.clear_files,
-        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        ).grid(row=0, column=3, sticky="ew", padx=(3, 0))
 
         ttk.Label(
             left,
-            text="Seret file (PDF, gambar, PPT) ke sini.",
+            text="Seret file (PDF, gambar, PPT) ke sini. "
+            "Geser baris atau pakai ▲▼ untuk mengatur urutan.",
             style="Muted.TLabel",
+            wraplength=240,
+            justify="left",
         ).pack(anchor="w", pady=(7, 0))
 
     # ----------------------------------------------------------
@@ -385,6 +430,10 @@ class PDFMultiSlidePro:
         # ditampilkan sebagai input — user memilih nama langsung di dialog simpan.
         self.output_name_var = tk.StringVar(value="Hasil_Gabungan.pdf")
 
+        # Folder hasil terakhir (agar nomor unik bisa dihitung sebelum dialog,
+        # dan naik berkelanjutan tiap kali "JADIKAN PDF" diklik).
+        self.last_output_dir = None
+
         self.process_button = ttk.Button(
             right,
             text="📄  JADIKAN PDF",
@@ -542,11 +591,13 @@ class PDFMultiSlidePro:
             self.tree.delete(item)
 
         total_pages = 0
-        for path in self.files:
+        for index, path in enumerate(self.files, start=1):
             pages = self._count_pages(path)
 
             self.tree.insert(
-                "", "end", values=(os.path.basename(path), pages)
+                "",
+                "end",
+                values=(index, os.path.basename(path), pages),
             )
 
             if isinstance(pages, int):
@@ -555,6 +606,92 @@ class PDFMultiSlidePro:
         self.file_count_var.set(
             f"{len(self.files)} file • {total_pages} halaman"
         )
+
+    # ----------------------------------------------------------
+    # PENGURUTAN (drag baris + tombol ▲▼)
+    # ----------------------------------------------------------
+
+    def _selected_indexes(self):
+        """Indeks (0-based) baris terpilih, urut menaik."""
+        return sorted(self.tree.index(item) for item in self.tree.selection())
+
+    def move_selected_up(self):
+        self._move_selected(-1)
+
+    def move_selected_down(self):
+        self._move_selected(1)
+
+    def _move_selected(self, direction):
+        """Geser semua baris terpilih satu langkah ke atas (-1) / bawah (+1).
+
+        Bila salah satu baris mencapai ujung, tak ada yang digeser agar blok
+        tetap kompak.
+        """
+        indexes = self._selected_indexes()
+        if not indexes:
+            messagebox.showwarning(
+                "Belum Dipilih", "Pilih file yang ingin dipindahkan."
+            )
+            return
+
+        if direction < 0 and indexes[0] == 0:
+            return
+        if direction > 0 and indexes[-1] == len(self.files) - 1:
+            return
+
+        # Geser mulai dari yang paling ujung sesuai arah agar tidak bertumbukan.
+        ordered = indexes if direction < 0 else list(reversed(indexes))
+        for i in ordered:
+            self.files[i], self.files[i + direction] = (
+                self.files[i + direction],
+                self.files[i],
+            )
+
+        self.refresh_tree()
+        self._reselect(indexes, direction)
+
+    def _reselect(self, indexes, direction):
+        """Pilih kembali baris yang baru dipindah (posisi sudah bergeser)."""
+        children = self.tree.get_children()
+        new_indexes = sorted(i + direction for i in indexes)
+        items = [children[i] for i in new_indexes if 0 <= i < len(children)]
+        if items:
+            self.tree.selection_set(items)
+            if direction < 0:
+                self.tree.see(items[0])
+            else:
+                self.tree.see(items[-1])
+
+    def _on_drag_start(self, event):
+        item = self.tree.identify_row(event.y)
+        if item and item not in self.tree.selection():
+            self.tree.selection_set(item)
+        self._drag_item = item or None
+
+    def _on_drag_motion(self, event):
+        if not self._drag_item:
+            return
+        target = self.tree.identify_row(event.y)
+        if not target or target == self._drag_item:
+            return
+
+        src_idx = self.tree.index(self._drag_item)
+        dst_idx = self.tree.index(target)
+
+        # Pindahkan entri di self.files lalu bangun ulang tampilan.
+        path = self.files.pop(src_idx)
+        self.files.insert(dst_idx, path)
+
+        self.refresh_tree()
+        children = self.tree.get_children()
+        if dst_idx < len(children):
+            moved = children[dst_idx]
+            self.tree.selection_set(moved)
+            self.tree.see(moved)
+            self._drag_item = moved
+
+    def _on_drag_release(self, event):
+        self._drag_item = None
 
     @staticmethod
     def _count_pages(path):
@@ -735,6 +872,14 @@ class PDFMultiSlidePro:
     # PROSES
     # ==========================================================
 
+    def _default_output_dir(self):
+        """Folder default untuk hasil: folder file sumber pertama, atau Documents."""
+        if self.files:
+            folder = os.path.dirname(os.path.abspath(self.files[0]))
+            if os.path.isdir(folder):
+                return folder
+        return os.path.expanduser("~")
+
     def start_process(self):
         if not self.files:
             messagebox.showwarning(
@@ -752,9 +897,24 @@ class PDFMultiSlidePro:
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
+        # Folder target: pakai folder hasil terakhir, atau folder file sumber,
+        # atau Documents. Dipakai untuk menghitung nama ber-nomor SEBELUM dialog
+        # dibuka, sehingga dialog sudah menawarkan nama unik (tanpa replace).
+        target_dir = self.last_output_dir
+        if not target_dir or not os.path.isdir(target_dir):
+            target_dir = self._default_output_dir()
+
+        # Nama dasar tanpa nomor lama, mis. "Hasil_Gabungan (2).pdf" → "Hasil_Gabungan".
+        base_stem, _ = os.path.splitext(filename)
+        base_stem = _strip_trailing_number(base_stem)
+        initial_name = os.path.basename(
+            unique_path(os.path.join(target_dir, base_stem + ".pdf"))
+        )
+
         output_path = filedialog.asksaveasfilename(
             title="Simpan PDF hasil",
-            initialfile=filename,
+            initialfile=initial_name,
+            initialdir=target_dir,
             defaultextension=".pdf",
             filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
         )
@@ -766,10 +926,21 @@ class PDFMultiSlidePro:
         if not output_path.lower().endswith(".pdf"):
             output_path += ".pdf"
 
+        # Catat folder yang dipilih untuk klik berikutnya (nomor naik berkelanjutan).
+        self.last_output_dir = os.path.dirname(os.path.abspath(output_path))
+
+        # Bila user pindah folder / nama sudah ada (bukan file sumber), pastikan
+        # tetap unik agar tidak ada pertanyaan replace & tidak menimpa file lama.
+        is_source = normalize_key(output_path) in {
+            normalize_key(p) for p in self.files
+        }
+        if os.path.exists(output_path) and not is_source:
+            output_path = unique_path(output_path)
+
         self.output_name_var.set(os.path.basename(output_path))
 
         overwrite_source = False
-        if normalize_key(output_path) in {normalize_key(p) for p in self.files}:
+        if is_source:
             if not messagebox.askyesno(
                 "Timpa File Sumber?",
                 "File hasil bernama SAMA dengan salah satu file sumber:\n\n"

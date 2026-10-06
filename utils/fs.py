@@ -89,6 +89,27 @@ def is_same_file(path_a, path_b):
     return normalize_key(path_a) == normalize_key(path_b)
 
 
+def unique_path(path):
+    """Kembalikan path yang belum terpakai; bila sudah ada, tambah ' (n)'.
+
+    Contoh: "Hasil.pdf" → "Hasil (1).pdf" → "Hasil (2).pdf".
+    Ekstensi dipertahankan di akhir.
+    """
+    if not os.path.exists(path):
+        return path
+
+    folder = os.path.dirname(path)
+    name = os.path.basename(path)
+    stem, ext = os.path.splitext(name)
+
+    counter = 1
+    while True:
+        candidate = os.path.join(folder, f"{stem} ({counter}){ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
+
+
 def format_size(num_bytes):
     """Format ukuran byte jadi string ringkas (mis. '8.2 KB', '1.4 MB')."""
     if num_bytes is None:

@@ -54,6 +54,8 @@ def main():
         "Hint drag&drop multi-format": "Seret file" in texts,
         "Status awal menyebut 'file'": "Tambahkan file untuk memulai" in texts,
         "Checkbox 'Bolak-balik (duplex)'": "Bolak-balik (duplex)" in texts,
+        "Tombol naik '\\u25b2'": "\u25b2" in texts,
+        "Tombol turun '\\u25bc'": "\u25bc" in texts,
     }
 
     for name, ok in checks.items():
@@ -62,6 +64,23 @@ def main():
     # Cek fungsi bantu multi-format benar-benar ada.
     print("[OK]  _is_readable tersedia:", hasattr(app, "_is_readable"))
     print("[OK]  _count_pages tersedia:", hasattr(app, "_count_pages"))
+
+    # Cek fitur pengurutan terpasang.
+    for fn in ("move_selected_up", "move_selected_down", "_move_selected"):
+        checks[f"{fn} ada"] = hasattr(app, fn)
+        print("[OK]  " + fn + " tersedia:", hasattr(app, fn))
+
+    # Uji pengurutan fungsional: isi files dummy, pindah, cek urutan self.files.
+    app.files = ["a.pdf", "b.pdf", "c.pdf"]
+    app.refresh_tree()
+    app.tree.selection_set(app.tree.get_children()[0])  # baris 'a.pdf'
+    app.move_selected_down()
+    checks["move down menukar urutan"] = app.files == ["b.pdf", "a.pdf", "c.pdf"]
+    print("[OK]  urutan setelah move-down:", app.files)
+    app.move_selected_up()
+    checks["move up mengembalikan urutan"] = app.files == ["a.pdf", "b.pdf", "c.pdf"]
+    print("[OK]  urutan setelah move-up:", app.files)
+    app.files = []
 
     # Cek var duplex & defaultnya.
     print("[OK]  duplex_var default:", app.duplex_var.get())
