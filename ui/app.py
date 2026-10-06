@@ -71,7 +71,7 @@ class PDFMultiSlidePro:
     def __init__(self, root):
         self.root = root
 
-        self.root.title("PDF ke Slide • Multi Slide Pro")
+        self.root.title("Multi-Page Layout")
         self.root.geometry("1400x850")
         self.root.minsize(1180, 720)
         self.root.configure(bg="#F4F6FA")
@@ -117,7 +117,7 @@ class PDFMultiSlidePro:
 
         ttk.Label(
             title_line,
-            text="Ubah dokumen jadi presentasi",
+            text="Multi-Page Layout",
             style="Title.TLabel",
         ).pack(side="left")
 
@@ -499,6 +499,7 @@ class PDFMultiSlidePro:
     # ==========================================================
 
     def enable_drag_drop(self, widget):
+        """Daftarkan widget (rekursif) sebagai target drop file."""
         try:
             widget.drop_target_register(DND_FILES)
             widget.dnd_bind("<<Drop>>", self.handle_drop)

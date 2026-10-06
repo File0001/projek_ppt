@@ -50,7 +50,7 @@ def main():
     checks = {
         "Tombol 'Tambah file'": "Tambah file" in texts,
         "Label 'Daftar file'": "Daftar file" in texts,
-        "Judul 'Ubah dokumen jadi presentasi'": "Ubah dokumen jadi presentasi" in texts,
+        "Judul 'Multi-Page Layout'": "Multi-Page Layout" in texts,
         "Hint drag&drop multi-format": "Seret file" in texts,
         "Status awal menyebut 'file'": "Tambahkan file untuk memulai" in texts,
         "Checkbox 'Bolak-balik (duplex)'": "Bolak-balik (duplex)" in texts,
@@ -69,6 +69,13 @@ def main():
     for fn in ("move_selected_up", "move_selected_down", "_move_selected"):
         checks[f"{fn} ada"] = hasattr(app, fn)
         print("[OK]  " + fn + " tersedia:", hasattr(app, fn))
+
+    # Drag & drop tetap berfungsi (tanpa preview overlay).
+    print("[OK]  enable_drag_drop tersedia:", hasattr(app, "enable_drag_drop"))
+    print("[OK]  handle_drop tersedia:", hasattr(app, "handle_drop"))
+    print("[OK]  preview overlay sudah dihapus:",
+          not hasattr(app, "_drop_overlay")
+          and not hasattr(app, "_show_drop_preview"))
 
     # Uji pengurutan fungsional: isi files dummy, pindah, cek urutan self.files.
     app.files = ["a.pdf", "b.pdf", "c.pdf"]
